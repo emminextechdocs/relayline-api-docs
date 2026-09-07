@@ -44,3 +44,9 @@ The website remains the source of truth for the published guide pages. `openapi.
 ## Contribute
 
 Run `npm test`, describe the reader problem, and provide sources for technical changes. See [contribution guidance](https://github.com/emminextechdocs/.github/blob/main/CONTRIBUTING.md).
+
+## License
+
+This repository's original code, documentation, and templates are available under the [MIT License](LICENSE). You may use, modify, and redistribute them, including commercially, provided you retain the copyright and license notice.
+
+This license does not grant trademark rights to the Emminex Techdocs name or logo, or license content on linked websites. Third-party material retains its own license.
