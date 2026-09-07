@@ -1,0 +1,12 @@
+{
+  "name": "@emminextechdocs/relayline-api-docs",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "^22.0.0 || ^24.0.0" },
+  "scripts": {
+    "test": "node scripts/validate.mjs && node --test",
+    "example": "node examples/webhook-demo.mjs"
+  },
+  "devDependencies": { "yaml": "2.8.3" }
+}

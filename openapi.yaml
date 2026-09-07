@@ -1,0 +1,439 @@
+openapi: 3.1.0
+info:
+  title: Relayline API
+  version: 1.0.0
+  description: >-
+    Send application events to HTTPS destinations, track delivery state, and
+    recover from temporary failures with retry-aware workflows.
+servers:
+  - url: https://api.relayline.example
+    description: Relayline API base URL
+tags:
+  - name: Deliveries
+    description: Create and inspect event deliveries.
+security:
+  - bearerAuth: []
+paths:
+  /v1/deliveries:
+    post:
+      operationId: createDelivery
+      tags: [Deliveries]
+      summary: Create a delivery
+      description: >-
+        Validates an event and adds it to the delivery queue. A successful
+        response confirms acceptance, not receipt by the destination.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeliveryRequest'
+            example:
+              destination: https://example.com/webhooks/orders
+              event: order.created
+              payload:
+                order_id: ord_7M2L9
+                total: 4800
+                currency: USD
+              idempotency_key: order-7M2L9-created
+      responses:
+        '202':
+          description: The delivery was validated and queued.
+          headers:
+            Relayline-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+              example:
+                id: dlv_01J6Y3G8V9K2M4P7Q1R5
+                event: order.created
+                status: queued
+                destination: https://example.com/webhooks/orders
+                attempts: 0
+                created_at: '2026-09-04T14:32:18Z'
+                completed_at: null
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/AuthenticationFailed'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: listDeliveries
+      tags: [Deliveries]
+      summary: List deliveries
+      description: >-
+        Returns deliveries for the authenticated project in reverse
+        chronological order.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Return only deliveries in this state.
+          schema:
+            $ref: '#/components/schemas/DeliveryStatus'
+        - name: limit
+          in: query
+          required: false
+          description: Number of deliveries to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor returned by the previous response.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of deliveries in reverse chronological order.
+          headers:
+            Relayline-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryList'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/AuthenticationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/deliveries/{delivery_id}:
+    get:
+      operationId: getDelivery
+      tags: [Deliveries]
+      summary: Retrieve a delivery
+      description: Returns the delivery's current state and attempt information.
+      parameters:
+        - name: delivery_id
+          in: path
+          required: true
+          description: The delivery identifier returned by createDelivery.
+          schema:
+            type: string
+            pattern: '^dlv_[A-Za-z0-9]+$'
+      responses:
+        '200':
+          description: The requested delivery.
+          headers:
+            Relayline-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+        '401':
+          $ref: '#/components/responses/AuthenticationFailed'
+        '404':
+          $ref: '#/components/responses/DeliveryNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+webhooks:
+  deliveryAttempt:
+    post:
+      operationId: receiveDeliveryAttempt
+      summary: Receive an event delivery
+      description: >-
+        Relayline sends a signed request for each attempt. Return a 2xx response
+        within 10 seconds to mark the delivery as successful.
+      parameters:
+        - name: Relayline-Signature
+          in: header
+          required: true
+          description: Signing timestamp and HMAC-SHA256 signature.
+          schema:
+            type: string
+            example: t=1788532338,v1=47bc5e1d6f1b7c39a0e6c2e3585ee59b8ef0ffcf1cd5a3ea274ef908a9e7d912
+        - name: Relayline-Delivery-Id
+          in: header
+          required: true
+          description: Identifier of the delivery making this attempt.
+          schema:
+            type: string
+            example: dlv_01J6Y3G8V9K2M4P7Q1R5
+        - name: Relayline-Attempt
+          in: header
+          required: true
+          description: Attempt number beginning at 1.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Event'
+      responses:
+        '204':
+          description: The destination accepted the event.
+        '400':
+          description: The destination rejected a malformed request.
+        '500':
+          description: The destination could not process the event.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: Use a test or live Relayline API key.
+  headers:
+    RequestId:
+      description: Unique identifier for tracing the API request.
+      schema:
+        type: string
+        example: req_01J6Y44C9N7Q2H5K8M3P
+    RateLimitLimit:
+      description: Maximum requests allowed in the current one-minute window.
+      schema:
+        type: integer
+        example: 600
+    RateLimitRemaining:
+      description: Requests remaining in the current window.
+      schema:
+        type: integer
+        example: 599
+    RateLimitReset:
+      description: Seconds until the current window resets.
+      schema:
+        type: integer
+        example: 42
+    RetryAfter:
+      description: Seconds to wait before making another request.
+      schema:
+        type: integer
+        example: 42
+  schemas:
+    DeliveryStatus:
+      type: string
+      enum: [queued, retrying, delivered, failed]
+    CreateDeliveryRequest:
+      type: object
+      additionalProperties: false
+      required: [destination, event, payload]
+      properties:
+        destination:
+          type: string
+          format: uri
+          pattern: '^https://'
+          description: An HTTPS URL that accepts the event.
+        event:
+          type: string
+          minLength: 1
+          maxLength: 80
+          pattern: '^[a-z0-9]+(?:[._-][a-z0-9]+)*$'
+          description: A lowercase event name separated by periods, underscores, or hyphens.
+        payload:
+          type: object
+          additionalProperties: true
+          description: The JSON object sent to the destination. Maximum serialized size is 256 KB.
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Prevents duplicate delivery creation for 24 hours.
+    Delivery:
+      type: object
+      additionalProperties: false
+      required: [id, event, status, destination, attempts, created_at, completed_at]
+      properties:
+        id:
+          type: string
+          pattern: '^dlv_[A-Za-z0-9]+$'
+          example: dlv_01J6Y3G8V9K2M4P7Q1R5
+        event:
+          type: string
+          example: order.created
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        destination:
+          type: string
+          format: uri
+        attempts:
+          type: integer
+          minimum: 0
+          maximum: 5
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+          description: Time the delivery entered a terminal state, or null while work continues.
+    DeliveryList:
+      type: object
+      additionalProperties: false
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Delivery'
+        next_cursor:
+          type: [string, 'null']
+          description: Opaque cursor for the next page, or null when no results remain.
+    Event:
+      type: object
+      additionalProperties: false
+      required: [id, type, delivery_id, created_at, data]
+      properties:
+        id:
+          type: string
+          pattern: '^evt_[A-Za-z0-9]+$'
+        type:
+          type: string
+        delivery_id:
+          type: string
+          pattern: '^dlv_[A-Za-z0-9]+$'
+        created_at:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+  responses:
+    InvalidRequest:
+      description: A required field is missing or malformed.
+      headers:
+        Relayline-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: invalid_request
+              message: The destination field must be an HTTPS URL.
+              request_id: req_01J6Y44C9N7Q2H5K8M3P
+    AuthenticationFailed:
+      description: The API key is missing or invalid.
+      headers:
+        Relayline-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: authentication_failed
+              message: The API key is missing or invalid.
+              request_id: req_01J6Y44C9N7Q2H5K8M3P
+    DeliveryNotFound:
+      description: No delivery matches the supplied identifier.
+      headers:
+        Relayline-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: delivery_not_found
+              message: No delivery matches the supplied identifier.
+              request_id: req_01J6Y44C9N7Q2H5K8M3P
+    IdempotencyConflict:
+      description: The idempotency key was reused with different request data.
+      headers:
+        Relayline-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: idempotency_conflict
+              message: The idempotency key was used with different request data.
+              request_id: req_01J6Y44C9N7Q2H5K8M3P
+    RateLimited:
+      description: The project exceeded its request allowance.
+      headers:
+        Relayline-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimitLimit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimitRemaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimitReset'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: rate_limit_exceeded
+              message: The project exceeded its request allowance.
+              request_id: req_01J6Y44C9N7Q2H5K8M3P
+    InternalError:
+      description: Relayline could not complete the request.
+      headers:
+        Relayline-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: internal_error
+              message: Relayline could not complete the request.
+              request_id: req_01J6Y44C9N7Q2H5K8M3P
